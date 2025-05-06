@@ -20,7 +20,7 @@
       --accent: #3399ff;
       --accent-light: #287acc;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin:0; padding:0; }
     body {
       font-family: Arial, sans-serif;
       padding: 20px;
@@ -73,8 +73,6 @@
     }
     table {
       width: 100%;
-      max-width: 100%;
-      margin: 0 auto;
       border-collapse: collapse;
       background: var(--card);
       margin-bottom: 20px;
@@ -90,7 +88,6 @@
     .invalid { background: #fdd; }
     .footer {
       text-align: center;
-      margin-top: 20px;
       font-size: 14px;
       color: var(--text);
     }
@@ -116,7 +113,7 @@
   <h1>批量查询 Bera 空投可领取数量</h1>
 
   <div class="controls">
-    <textarea id="addrInput" placeholder="每行一个地址，支持多个地址批量查询…"></textarea>
+    <textarea id="addrInput" placeholder="每行一个地址…"></textarea>
     <button id="queryBtn">查询</button>
     <button id="clearBtn">清空</button>
   </div>
@@ -158,33 +155,51 @@
       themeToggle.textContent = isDark ? '🌙' : '☀️';
     };
 
-    // 清空输入
+    // 清空
     clearBtn.onclick = () => {
       input.value = '';
       tbody.innerHTML = '';
     };
 
-    // Ctrl/Shift + Enter 触发查询
+    // Ctrl/Shift+Enter 触发查询
     input.addEventListener('keydown', e => {
       if ((e.ctrlKey || e.shiftKey) && e.key === 'Enter') {
         queryBtn.click();
       }
     });
 
-    // fetch 重试
-    async function fetchWithRetry(url, attempts = 2) {
-      for (let i = 0; i < attempts; i++) {
-        try {
-          const res = await fetch(url);
-          if (!res.ok) throw new Error(res.statusText);
-          return await res.json();
-        } catch(e) {
-          if (i === attempts - 1) throw e;
-        }
+    // 分批（每次 5 个）查询
+    async function batchFetch(addrs) {
+      for (let i = 0; i < addrs.length; i += 5) {
+        const chunk = addrs.slice(i, i + 5);
+        const promises = chunk.map(addr => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${addr}</td><td colspan="3" class="loading">加载中…</td>`;
+          tbody.appendChild(tr);
+          return fetch(`https://supply-api.berachain.com/api/boyco?address=${addr}`)
+            .then(res => {
+              if (!res.ok) throw new Error(res.statusText);
+              return res.json();
+            })
+            .then(data => ({ addr, data, tr }))
+            .catch(() => ({ addr, error: true, tr }));
+        });
+        const results = await Promise.all(promises);
+        results.forEach(({ addr, data, tr, error }) => {
+          if (error) {
+            tr.innerHTML = `<td>${addr}</td><td colspan="3" style="color:red">查询失败</td>`;
+          } else {
+            tr.innerHTML =
+              `<td>${data.address}</td>` +
+              `<td>${fmt(data.totalBeraAllocation)}</td>` +
+              `<td>${fmt(data.thirtyDayBeraAllocation)}</td>` +
+              `<td>${fmt(data.ninetyDayBeraAllocation)}</td>`;
+          }
+        });
       }
     }
 
-    // 批量查询
+    // 查询按钮
     queryBtn.onclick = async () => {
       let txt = input.value.trim();
       if (!txt) return alert('请先输入一个或多个地址');
@@ -193,10 +208,11 @@
 
       const lines = txt.split('\n').map(s => s.trim());
       const unique = Array.from(new Set(lines));
-      const valid = unique.filter(a => /^0x[0-9a-f]{40}$/i.test(a));
+      const valid   = unique.filter(a => /^0x[0-9a-f]{40}$/i.test(a));
       const invalid = unique.filter(a => !/^0x[0-9a-f]{40}$/i.test(a));
 
       tbody.innerHTML = '';
+      // 显示无效地址
       invalid.forEach(addr => {
         const tr = document.createElement('tr');
         tr.classList.add('invalid');
@@ -204,27 +220,8 @@
         tbody.appendChild(tr);
       });
 
-      const promises = valid.map(addr => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${addr}</td><td colspan="3" class="loading">加载中…</td>`;
-        tbody.appendChild(tr);
-        return fetchWithRetry(`https://supply-api.berachain.com/api/boyco?address=${addr}`)
-          .then(data => ({ addr, data, tr }))
-          .catch(() => ({ addr, error: true, tr }));
-      });
-
-      const results = await Promise.all(promises);
-      results.forEach(({ addr, data, tr, error }) => {
-        if (error) {
-          tr.innerHTML = `<td>${addr}</td><td colspan="3" style="color:red">查询失败</td>`;
-        } else {
-          tr.innerHTML =
-            `<td>${data.address}</td>` +
-            `<td>${fmt(data.totalBeraAllocation)}</td>` +
-            `<td>${fmt(data.thirtyDayBeraAllocation)}</td>` +
-            `<td>${fmt(data.ninetyDayBeraAllocation)}</td>`;
-        }
-      });
+      // 分批查询有效地址
+      await batchFetch(valid);
 
       queryBtn.disabled = clearBtn.disabled = false;
       queryBtn.textContent = '查询';
