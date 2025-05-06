@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>批量查询 Bera 空投分配</title>
+  <style>
+    :root {
+      --bg: #f7f7f7;
+      --text: #333;
+      --card: #fff;
+      --border: #ccc;
+      --accent: #0066cc;
+      --accent-light: #005bb5;
+    }
+    [data-theme="dark"] {
+      --bg: #1e1e1e;
+      --text: #ddd;
+      --card: #2b2b2b;
+      --border: #555;
+      --accent: #3399ff;
+      --accent-light: #287acc;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: var(--bg);
+      color: var(--text);
+      transition: background .3s, color .3s;
+    }
+    h1 { text-align: center; margin-bottom: 20px; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    textarea {
+      flex: 1 1 300px;
+      min-width: 200px;
+      height: 100px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--card);
+      color: var(--text);
+      resize: vertical;
+    }
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    button:hover:not([disabled]) { background: var(--accent-light); }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    #clearBtn { background: #999; }
+    #clearBtn:hover:not([disabled]) { background: #777; }
+    #themeToggle {
+      position: fixed;
+      top: 15px;
+      right: 15px;
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: var(--accent);
+    }
+    table {
+      width: 100%;
+      max-width: 100%;
+      margin: 0 auto;
+      border-collapse: collapse;
+      background: var(--card);
+      margin-bottom: 20px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px;
+      text-align: center;
+      font-size: 14px;
+    }
+    th { background: var(--border); }
+    .loading { color: var(--accent); }
+    .invalid { background: #fdd; }
+    .footer {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .footer a.button {
+      display: inline-block;
+      margin: 8px 0;
+      padding: 8px 16px;
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      border-radius: 4px;
+      transition: background .2s;
+    }
+    .footer a.button:hover { background: var(--accent-light); }
+    @media (max-width: 600px) {
+      .controls { flex-direction: column; }
+      button { width: 100%; }
+    }
+  </style>
+</head>
+<body data-theme="light">
+  <button id="themeToggle" title="切换主题">🌙</button>
+  <h1>批量查询 Bera 空投可领取数量</h1>
+
+  <div class="controls">
+    <textarea id="addrInput" placeholder="每行一个地址，支持多个地址批量查询…"></textarea>
+    <button id="queryBtn">查询</button>
+    <button id="clearBtn">清空</button>
+  </div>
+
+  <table id="resultTable">
+    <thead>
+      <tr>
+        <th>地址</th>
+        <th>空投总额</th>
+        <th>30 日分配</th>
+        <th>90 日分配</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="footer">
+    <p>作者 Twitter：<a href="https://twitter.com/0xXIAOc" target="_blank">@0xXIAOc</a></p>
+    <p><a class="button" href="https://boyco.berachain.com" target="_blank">前往空投领取入口</a></p>
+    <p>连接钱包后，查看您的账户余额和可用奖励。注意：大多数预存预充值金库奖励和所有充值必须直接从各自的金库领取。非 $BERA 奖励应根据各协议的 TGE/积分计划等，在各自的网站上领取。</p>
+  </div>
+
+  <script>
+  (function(){
+    const input = document.getElementById('addrInput');
+    const queryBtn = document.getElementById('queryBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const tbody = document.querySelector('#resultTable tbody');
+    const themeToggle = document.getElementById('themeToggle');
+
+    // 格式化数字
+    const fmt = n => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    // 主题切换
+    themeToggle.onclick = () => {
+      const el = document.body;
+      const isDark = el.getAttribute('data-theme') === 'dark';
+      el.setAttribute('data-theme', isDark ? 'light' : 'dark');
+      themeToggle.textContent = isDark ? '🌙' : '☀️';
+    };
+
+    // 清空输入
+    clearBtn.onclick = () => {
+      input.value = '';
+      tbody.innerHTML = '';
+    };
+
+    // Ctrl/Shift + Enter 触发查询
+    input.addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.shiftKey) && e.key === 'Enter') {
+        queryBtn.click();
+      }
+    });
+
+    // fetch 重试
+    async function fetchWithRetry(url, attempts = 2) {
+      for (let i = 0; i < attempts; i++) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(res.statusText);
+          return await res.json();
+        } catch(e) {
+          if (i === attempts - 1) throw e;
+        }
+      }
+    }
+
+    // 批量查询
+    queryBtn.onclick = async () => {
+      let txt = input.value.trim();
+      if (!txt) return alert('请先输入一个或多个地址');
+      queryBtn.disabled = clearBtn.disabled = true;
+      queryBtn.textContent = '查询中…';
+
+      const lines = txt.split('\n').map(s => s.trim());
+      const unique = Array.from(new Set(lines));
+      const valid = unique.filter(a => /^0x[0-9a-f]{40}$/i.test(a));
+      const invalid = unique.filter(a => !/^0x[0-9a-f]{40}$/i.test(a));
+
+      tbody.innerHTML = '';
+      invalid.forEach(addr => {
+        const tr = document.createElement('tr');
+        tr.classList.add('invalid');
+        tr.innerHTML = `<td>${addr}</td><td colspan="3">地址格式无效</td>`;
+        tbody.appendChild(tr);
+      });
+
+      const promises = valid.map(addr => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${addr}</td><td colspan="3" class="loading">加载中…</td>`;
+        tbody.appendChild(tr);
+        return fetchWithRetry(`https://supply-api.berachain.com/api/boyco?address=${addr}`)
+          .then(data => ({ addr, data, tr }))
+          .catch(() => ({ addr, error: true, tr }));
+      });
+
+      const results = await Promise.all(promises);
+      results.forEach(({ addr, data, tr, error }) => {
+        if (error) {
+          tr.innerHTML = `<td>${addr}</td><td colspan="3" style="color:red">查询失败</td>`;
+        } else {
+          tr.innerHTML =
+            `<td>${data.address}</td>` +
+            `<td>${fmt(data.totalBeraAllocation)}</td>` +
+            `<td>${fmt(data.thirtyDayBeraAllocation)}</td>` +
+            `<td>${fmt(data.ninetyDayBeraAllocation)}</td>`;
+        }
+      });
+
+      queryBtn.disabled = clearBtn.disabled = false;
+      queryBtn.textContent = '查询';
+    };
+  })();
+  </script>
+</body>
+</html>
