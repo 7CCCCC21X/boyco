@@ -86,6 +86,11 @@
     th { background: var(--border); }
     .loading { color: var(--accent); }
     .invalid { background: #fdd; }
+    .note {
+      text-align: center;
+      margin-bottom: 10px;
+      color: #d9534f;
+    }
     .footer {
       text-align: center;
       font-size: 14px;
@@ -118,6 +123,10 @@
     <button id="clearBtn">清空</button>
   </div>
 
+  <div id="retryNote" class="note" style="display:none;">
+    部分查询失败，30 秒后将自动重试…
+  </div>
+
   <table id="resultTable">
     <thead>
       <tr>
@@ -143,6 +152,7 @@
     const clearBtn = document.getElementById('clearBtn');
     const tbody = document.querySelector('#resultTable tbody');
     const themeToggle = document.getElementById('themeToggle');
+    const retryNote = document.getElementById('retryNote');
 
     // 格式化数字
     const fmt = n => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -150,15 +160,16 @@
     // 主题切换
     themeToggle.onclick = () => {
       const el = document.body;
-      const isDark = el.getAttribute('data-theme') === 'dark';
-      el.setAttribute('data-theme', isDark ? 'light' : 'dark');
-      themeToggle.textContent = isDark ? '🌙' : '☀️';
+      const dark = el.getAttribute('data-theme') === 'dark';
+      el.setAttribute('data-theme', dark ? 'light' : 'dark');
+      themeToggle.textContent = dark ? '🌙' : '☀️';
     };
 
     // 清空
     clearBtn.onclick = () => {
       input.value = '';
       tbody.innerHTML = '';
+      retryNote.style.display = 'none';
     };
 
     // Ctrl/Shift+Enter 触发查询
@@ -168,8 +179,9 @@
       }
     });
 
-    // 分批（每次 5 个）查询
+    // 单次批量（每 5 个）查询
     async function batchFetch(addrs) {
+      const failures = [];
       for (let i = 0; i < addrs.length; i += 5) {
         const chunk = addrs.slice(i, i + 5);
         const promises = chunk.map(addr => {
@@ -188,6 +200,7 @@
         results.forEach(({ addr, data, tr, error }) => {
           if (error) {
             tr.innerHTML = `<td>${addr}</td><td colspan="3" style="color:red">查询失败</td>`;
+            failures.push(addr);
           } else {
             tr.innerHTML =
               `<td>${data.address}</td>` +
@@ -197,6 +210,7 @@
           }
         });
       }
+      return failures;
     }
 
     // 查询按钮
@@ -205,14 +219,15 @@
       if (!txt) return alert('请先输入一个或多个地址');
       queryBtn.disabled = clearBtn.disabled = true;
       queryBtn.textContent = '查询中…';
+      retryNote.style.display = 'none';
 
-      const lines = txt.split('\n').map(s => s.trim());
-      const unique = Array.from(new Set(lines));
+      const lines   = txt.split('\n').map(s => s.trim());
+      const unique  = Array.from(new Set(lines));
       const valid   = unique.filter(a => /^0x[0-9a-f]{40}$/i.test(a));
       const invalid = unique.filter(a => !/^0x[0-9a-f]{40}$/i.test(a));
 
       tbody.innerHTML = '';
-      // 显示无效地址
+      // 无效
       invalid.forEach(addr => {
         const tr = document.createElement('tr');
         tr.classList.add('invalid');
@@ -220,11 +235,33 @@
         tbody.appendChild(tr);
       });
 
-      // 分批查询有效地址
-      await batchFetch(valid);
+      // 首轮
+      const failures = await batchFetch(valid);
 
-      queryBtn.disabled = clearBtn.disabled = false;
-      queryBtn.textContent = '查询';
+      // 如果有失败，30s 后重试一次
+      if (failures.length) {
+        retryNote.style.display = 'block';
+        setTimeout(async () => {
+          // 继续重试失败列表
+          const finalFails = await batchFetch(failures);
+          if (finalFails.length) {
+            // 最终还有失败，标记红色
+            finalFails.forEach(addr => {
+              const tr = [...tbody.querySelectorAll('tr')]
+                .find(r => r.cells[0].textContent === addr);
+              if (tr) {
+                tr.innerHTML = `<td>${addr}</td><td colspan="3" style="color:red">重试失败</td>`;
+              }
+            });
+          }
+          retryNote.style.display = 'none';
+          queryBtn.disabled = clearBtn.disabled = false;
+          queryBtn.textContent = '查询';
+        }, 30000);
+      } else {
+        queryBtn.disabled = clearBtn.disabled = false;
+        queryBtn.textContent = '查询';
+      }
     };
   })();
   </script>
